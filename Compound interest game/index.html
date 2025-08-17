@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Money Quest Game</title>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.js"></script>
+<style>
+    body { margin: 0; background: #000; }
+    #calculator {
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: #f9f3e6;
+        padding: 20px;
+        border-radius: 16px;
+        border: 6px solid #b5651d;
+        font-family: 'Arial', sans-serif;
+        width: 360px;
+        box-shadow: 0 8px 20px rgba(0,0,0,0.4);
+        display: none;
+        z-index: 10;
+    }
+    #calculator input {
+        width: 100%;
+        padding: 9px;
+        border: 2px solid #cfa97e;
+        border-radius: 8px;
+        margin-bottom: 10px;
+    }
+    #calculator button {
+        background: #4a90e2;
+        color: white;
+        border: none;
+        padding: 10px;
+        font-size: 16px;
+        border-radius: 8px;
+        cursor: pointer;
+        margin-right: 6px;
+    }
+    #calculator button:hover { background: #357ABD; }
+</style>
+</head>
+<body>
+
+<div id="calculator">
+    <h3 id="calcTitle"></h3>
+    <div id="calcInputs"></div>
+    <div id="fact" style="margin:10px 0; font-style:italic; color:#333;"></div>
+    <div id="result" style="margin-top:10px; font-weight:bold; white-space:pre-line;"></div>
+    <div id="calcActions"></div>
+</div>
+
+<script>
+let game;
+let player, cursors, currentMode = "";
+let bubbleBG, bubbleText;
+let zones = {};
+let chosenMode = ""; // savings or loan
+let stepOrder = ["start","amount","rate","years","results"];
+let currentStepIndex = 0;
+let userData = { amount:0, rate:0, years:0 };
+
+let marker; 
+let markerTween;
+let activeGlow, activeArrow;
+
+window.onload = function() {
+    const config = {
+        type: Phaser.AUTO,
+        width: 800,
+        height: 600,
+        physics: { default: 'arcade', arcade: { debug: false }},
+        scene: { preload, create, update }
+    };
+    game = new Phaser.Game(config);
+};
+
+function preload() {
+    this.load.image('map', 'assets/NewCity2.png');
+    this.load.spritesheet('player', 'assets/Pink_Monster.png', { frameWidth: 32, frameHeight: 32 });
+}
+
+function create() {
+    let bg = this.add.image(0, 0, 'map').setOrigin(0, 0);
+    this.cameras.main.setBounds(0, 0, bg.width, bg.height);
+    this.physics.world.setBounds(0, 0, bg.width, bg.height);
+
+    // Player
+    player = this.physics.add.sprite(400, 300, 'player');
+    player.setCollideWorldBounds(true);
+    this.cameras.main.startFollow(player, true, 0.1, 0.1);
+    this.cameras.main.setZoom(2.1);
+
+    this.anims.create({
+        key: 'walk',
+        frames: this.anims.generateFrameNumbers('player', { start: 0, end: 3 }),
+        frameRate: 8,
+        repeat: -1
+    });
+
+    cursors = this.input.keyboard.createCursorKeys();
+
+    // Zones at landmarks
+    zones.start   = makeZone(this, 100, 150, "🌾 Windmill (Start)", "start");
+    zones.amount  = makeZone(this, 450, 120, "🏚 Barn (Amount)", "amount");
+    zones.rate    = makeZone(this, 600, 220, "🏡 Farmhouse (Interest)", "rate");
+    zones.years   = makeZone(this, 250, 350, "🌳 Orchard (Years)", "years");
+    zones.results = makeZone(this, 400, 450, "🏠 Big Barn (Results)", "results");
+
+    // Bubble
+    bubbleBG = this.add.graphics();
+    bubbleBG.fillStyle(0xffffff, 1);
+    bubbleBG.fillRoundedRect(0, 0, 230, 70, 10);
+    bubbleBG.setVisible(false);
+
+    bubbleText = this.add.text(0, 0, "", { font: "14px Arial", fill: "#000" });
+    bubbleText.setVisible(false);
+
+    // Action key
+    this.input.keyboard.on('keydown-E', () => {
+        if (currentMode) openCalculator(currentMode);
+    });
+
+    // Start highlight on first step
+    highlightZone(this, zones.start);
+}
+
+function update() {
+    player.setVelocity(0);
+    if (cursors.left.isDown) player.setVelocityX(-150);
+    if (cursors.right.isDown) player.setVelocityX(150);
+    if (cursors.up.isDown) player.setVelocityY(-150);
+    if (cursors.down.isDown) player.setVelocityY(150);
+
+    if (player.body.velocity.x !== 0 || player.body.velocity.y !== 0) {
+        player.anims.play('walk', true);
+    } else {
+        player.anims.stop();
+    }
+}
+
+function makeZone(scene, x, y, label, mode) {
+    let zone = scene.add.zone(x, y, 60, 60);
+    scene.physics.world.enable(zone);
+    zone.body.setAllowGravity(false);
+    zone.body.moves = false;
+    scene.add.text(x - 40, y - 50, label, { font: "14px Arial", fill: "#fff" });
+
+    scene.physics.add.overlap(player, zone, () => {
+        if (stepOrder[currentStepIndex] === mode) {
+            showBubble(zone, "Press E at the " + label, mode);
+        }
+    });
+    return zone;
+}
+
+function showBubble(zone, text, mode) {
+    bubbleBG.setVisible(true);
+    bubbleText.setVisible(true);
+    bubbleText.setText(text);
+    bubbleBG.x = zone.x - 110;
+    bubbleBG.y = zone.y - 90;
+    bubbleText.x = zone.x - 100;
+    bubbleText.y = zone.y - 80;
+    currentMode = mode;
+}
+
+// 🔵 Highlight helper (glow + bouncing arrow)
+function highlightZone(scene, zone) {
+    if (activeGlow) activeGlow.destroy();
+    if (activeArrow) activeArrow.destroy();
+
+    // Glow
+    activeGlow = scene.add.graphics();
+    activeGlow.lineStyle(4, 0x00ffcc, 1);
+    activeGlow.strokeRect(zone.x - 40, zone.y - 40, 80, 80);
+    activeGlow.alpha = 0.7;
+
+    scene.tweens.add({
+        targets: activeGlow,
+        alpha: { from: 0.2, to: 1 },
+        duration: 1000,
+        yoyo: true,
+        repeat: -1
+    });
+
+    // Arrow
+    activeArrow = scene.add.text(zone.x, zone.y - 70, "⬇️", { font: "24px Arial", fill: "#ff0" });
+    scene.tweens.add({
+        targets: activeArrow,
+        y: zone.y - 90,
+        duration: 600,
+        yoyo: true,
+        repeat: -1
+    });
+}
+
+function openCalculator(mode) {
+    const calc = document.getElementById('calculator');
+    const inputs = document.getElementById('calcInputs');
+    const fact = document.getElementById('fact');
+    const result = document.getElementById('result');
+    const title = document.getElementById('calcTitle');
+    const actions = document.getElementById('calcActions');
+    inputs.innerHTML = "";
+    result.textContent = "";
+    fact.textContent = "";
+    actions.innerHTML = "";
+
+    if (mode === "start") {
+        title.textContent = "Choose Mode";
+        inputs.innerHTML = `
+            <button onclick="chooseMode('savings')">💰 Savings</button>
+            <button onclick="chooseMode('loan')">💸 Loan</button>
+        `;
+        fact.textContent = "💡 Choose whether you want to explore savings or loans.";
+    }
+    if (mode === "amount") {
+        title.textContent = "Set Amount";
+        inputs.innerHTML = `<input type="number" id="amount" value="${userData.amount || 1000}">`;
+        fact.textContent = "💡 The amount you begin with is the base for growth or repayment.";
+        actions.innerHTML = `<button onclick="saveAndClose()">Save & Continue</button>`;
+    }
+    if (mode === "rate") {
+        title.textContent = "Set Interest Rate (%)";
+        inputs.innerHTML = `<input type="number" id="rate" value="${userData.rate || 7}">`;
+        fact.textContent = "💡 Even a small difference in interest makes a big change over years.";
+        actions.innerHTML = `<button onclick="saveAndClose()">Save & Continue</button>`;
+    }
+    if (mode === "years") {
+        title.textContent = "Set Time (Years)";
+        inputs.innerHTML = `<input type="number" id="years" value="${userData.years || 5}">`;
+        fact.textContent = "💡 More years means more compounding for savings — or more interest for loans.";
+        actions.innerHTML = `<button onclick="saveAndClose()">Save & Continue</button>`;
+    }
+    if (mode === "results") {
+        title.textContent = "Your Results";
+        calculateResult();
+        actions.innerHTML = `
+            <button onclick="restartGame()">🔄 Try Another Option</button>
+            <button onclick="endGame()">✅ End Game</button>
+        `;
+    }
+
+    calc.style.display = 'block';
+    game.scene.pause('default');
+}
+
+function saveAndClose() {
+    if (currentMode === "amount") {
+        userData.amount = parseFloat(document.getElementById('amount').value) || 0;
+    }
+    if (currentMode === "rate") {
+        userData.rate = parseFloat(document.getElementById('rate').value) || 0;
+    }
+    if (currentMode === "years") {
+        userData.years = parseFloat(document.getElementById('years').value) || 0;
+    }
+    closeCalculator();
+}
+
+function closeCalculator() {
+    document.getElementById('calculator').style.display = 'none';
+    game.scene.resume('default');
+    currentStepIndex++;
+    if (currentStepIndex >= stepOrder.length) currentStepIndex = stepOrder.length-1;
+    highlightZone(game.scene.scenes[0], zones[stepOrder[currentStepIndex]]);
+}
+
+function chooseMode(mode) {
+    chosenMode = mode;
+    closeCalculator();
+}
+
+function calculateResult() {
+    const amt = userData.amount;
+    const rate = userData.rate/100;
+    const years = userData.years;
+    let resultText = "";
+
+    if (chosenMode === "savings") {
+        const final = amt * Math.pow(1 + rate, years);
+        resultText = `Final Amount: R${final.toFixed(2)}\n💡 Compounding makes your savings snowball.`;
+    } else if (chosenMode === "loan") {
+        const months = years * 12;
+        const monthlyRate = rate / 12;
+        const monthlyPayment = (amt * monthlyRate) / (1 - Math.pow(1 + monthlyRate, -months));
+        const totalPaid = monthlyPayment * months;
+        const interestPaid = totalPaid - amt;
+        resultText = `Monthly Payment: R${monthlyPayment.toFixed(2)}\nTotal Paid: R${totalPaid.toFixed(2)}\nInterest Paid: R${interestPaid.toFixed(2)}\n💡 Loans cost more due to interest.`;
+    }
+    document.getElementById('result').textContent = resultText;
+}
+
+function restartGame() {
+    userData = { amount:0, rate:0, years:0 };
+    chosenMode = "";
+    currentStepIndex = 0;
+    document.getElementById('calculator').style.display = 'none';
+    highlightZone(game.scene.scenes[0], zones.start);
+}
+
+function endGame() {
+    alert("Thanks for playing Money Quest! 🎉");
+    document.getElementById('calculator').style.display = 'none';
+}
+</script>
+</body>
+</html>
