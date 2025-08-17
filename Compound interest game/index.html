@@ -90,7 +90,7 @@ function create() {
     player = this.physics.add.sprite(400, 300, 'player');
     player.setCollideWorldBounds(true);
     this.cameras.main.startFollow(player, true, 0.1, 0.1);
-    this.cameras.main.setZoom(2.1);
+    this.cameras.main.setZoom(1);
 
     this.anims.create({
         key: 'walk',
